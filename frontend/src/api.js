@@ -26,9 +26,14 @@ export function getWeeklyReport(childId) {
   return request(`/reports/weekly/${childId}`)
 }
 
-// GET /alerts/{parent_id}
-export function getAlerts(parentId) {
-  return request(`/alerts/${parentId}`)
+// GET /alerts/{parent_id}?limit=N  (newest first)
+export function getAlerts(parentId, limit = 20) {
+  return request(`/alerts/${parentId}?limit=${limit}`)
+}
+
+// PATCH /alerts/{alert_id}/read
+export function markAlertRead(alertId) {
+  return request(`/alerts/${alertId}/read`, { method: 'PATCH' })
 }
 
 // POST /blocklist
