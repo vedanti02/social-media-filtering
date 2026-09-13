@@ -28,20 +28,6 @@ function formatCategory(category) {
   return category.replaceAll('_', ' ')
 }
 
-const styles = {
-  list: { listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.5rem' },
-  card: {
-    border: '1px solid #ccc',
-    borderRadius: 6,
-    padding: '0.75rem 1rem',
-    cursor: 'pointer',
-    background: '#fff',
-  },
-  unread: { borderLeft: '4px solid #d33', background: '#fff5f5', fontWeight: 600 },
-  meta: { fontSize: '0.85rem', color: '#555', fontWeight: 400 },
-  empty: { color: '#666', fontStyle: 'italic' },
-}
-
 export default function Alerts() {
   const [alerts, setAlerts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -76,25 +62,39 @@ export default function Alerts() {
     }
   }
 
+  const unreadCount = alerts.filter((a) => !a.is_read).length
+
   return (
-    <section>
-      <h2>Alerts</h2>
-      {error && <p role="alert">Something went wrong: {error}</p>}
+    <section className="card">
+      <div className="card__header">
+        <div className="card__title">
+          <span className="card__title-icon">⚠️</span> Alerts
+        </div>
+        {!loading && alerts.length > 0 && (
+          <span className="card__count">{unreadCount} unread</span>
+        )}
+      </div>
+      <p className="card__subtitle">Severe messages caught by the safety scanner.</p>
+
+      {error && <p className="error-banner" role="alert">Something went wrong: {error}</p>}
       {loading ? (
-        <p>Loading…</p>
+        <p className="loading-state">Loading…</p>
       ) : alerts.length === 0 ? (
-        <p style={styles.empty}>No alerts. Nothing severe has been caught.</p>
+        <p className="empty-state">No alerts. Nothing severe has been caught.</p>
       ) : (
-        <ul style={styles.list}>
+        <ul className="alert-list">
           {alerts.map((alert) => (
             <li
               key={alert.id}
-              style={{ ...styles.card, ...(alert.is_read ? {} : styles.unread) }}
+              className={`alert-card ${alert.is_read ? '' : 'alert-card--unread'}`}
               onClick={() => handleRead(alert)}
               aria-label={`${alert.is_read ? 'Read' : 'Unread'} alert: ${alert.category} from ${alert.sender}`}
             >
-              <div>{formatCategory(alert.category)}</div>
-              <div style={styles.meta}>
+              <div className="alert-card__title">
+                {!alert.is_read && <span className="alert-card__dot" />}
+                {formatCategory(alert.category)}
+              </div>
+              <div className="alert-card__meta">
                 from {alert.sender} · {relativeTime(alert.created_at)}
               </div>
             </li>
