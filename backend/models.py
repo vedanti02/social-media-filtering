@@ -32,7 +32,7 @@ class Message(SQLModel, table=True):
     text: str
     sender: str
     score: float = 0.0
-    status: str = "pending"  # TODO: enum — e.g. "safe" | "flagged" | "blocked"
+    status: str = "pending"  # "low" | "medium" | "high" toxicity, set by classify()
     created_at: datetime = Field(default_factory=utcnow)
 
 

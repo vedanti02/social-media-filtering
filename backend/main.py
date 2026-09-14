@@ -14,10 +14,6 @@ from models import Alert, BlockedWord, Child, Message, Parent  # noqa: F401
 DATABASE_URL = "sqlite:///./app.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
-# Toxicity score at or above which a scanned message raises an Alert for the
-# child's parent. Tune here.
-SEVERE_THRESHOLD = 0.8
-
 app = FastAPI(title="Child Safety Messaging API")
 
 app.add_middleware(
@@ -61,26 +57,29 @@ def create_message(payload: MessageCreate, session: Session = Depends(get_sessio
     # TODO: check text against the parent's BlockedWord list before/after classification
     result = classify(payload.text)
     score = float(result["score"])
-    is_severe = score >= SEVERE_THRESHOLD
+    level = result["label"]  # "low" | "medium" | "high"
+    is_severe = level == "high"
 
     message = Message(
         child_id=child.id,
         text=payload.text,
         sender=payload.sender,
         score=score,
-        status="flagged" if is_severe else "safe",
+        status=level,
     )
     session.add(message)
 
-    # A SEVERE score is the only thing that raises an alert. The alert
-    # intentionally carries no message text and no reference to the Message
-    # row -- see the Alert docstring in models.py.
+    # A high-toxicity message is the only thing that raises an alert. The
+    # alert intentionally carries no message text and no reference to the
+    # Message row -- see the Alert docstring in models.py.
     if is_severe:
         session.add(
             Alert(
                 child_id=child.id,
                 sender=payload.sender,
-                category=result["label"],
+                # TODO: derive a harm-type category (e.g. "threat", "harassment")
+                # once the classifier detects categories, not just severity.
+                category="high_toxicity",
                 severity_score=score,
             )
         )
