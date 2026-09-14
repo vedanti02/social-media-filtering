@@ -1,5 +1,6 @@
-// One fetch helper per backend route. Base URL matches the FastAPI dev server.
-const BASE_URL = 'http://localhost:8000'
+// One fetch helper per backend route. Base URL comes from VITE_API_URL in
+// production (set in Vercel); falls back to the local FastAPI dev server.
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {

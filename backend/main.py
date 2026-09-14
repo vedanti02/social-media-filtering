@@ -2,6 +2,7 @@
 
 Run with:  uvicorn main:app --reload
 """
+import os
 from typing import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -16,9 +17,17 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 app = FastAPI(title="Child Safety Messaging API")
 
+# Comma-separated list of allowed frontend origins. Set ALLOWED_ORIGINS in
+# production (e.g. "https://your-app.vercel.app"); defaults to the Vite dev server.
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
