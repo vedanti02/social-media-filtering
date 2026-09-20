@@ -100,23 +100,53 @@ button {
   margin-top: 0.15rem;
 }
 
-.app-main {
+.app-shell {
   max-width: 1080px;
   margin: 0 auto;
   padding: 1.75rem;
+  display: grid;
+  gap: 2rem;
+}
+
+/* View group ------------------------------------------------------------- */
+/* Two zones on the page: "what the child sees" vs "the parent dashboard" --
+   kept visually distinct so a demo makes it obvious which side is which. */
+
+.view-group--child {
+  background: var(--primary-soft);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+}
+
+.view-group__header {
+  margin-bottom: 1.1rem;
+}
+
+.view-group__title {
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.view-group__desc {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: 0.15rem;
+}
+
+.view-group__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
   align-items: start;
 }
 
-.app-main__col {
+.view-group__col {
   display: grid;
   gap: 1.25rem;
 }
 
 @media (max-width: 760px) {
-  .app-main {
+  .view-group__grid {
     grid-template-columns: 1fr;
   }
 }
@@ -232,6 +262,30 @@ button {
   cursor: not-allowed;
 }
 
+.btn--danger {
+  background: var(--danger);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #a01e18;
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.btn--sm {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+}
+
 /* Badges / status ---------------------------------------------------------- */
 
 .badge {
@@ -320,9 +374,11 @@ button {
 .alert-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0.25rem 0 0;
   display: grid;
   gap: 0.55rem;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .alert-card {
@@ -388,6 +444,218 @@ button {
   border-radius: var(--radius-sm);
   padding: 0.6rem 0.85rem;
   font-size: 0.85rem;
+}
+
+.info-banner {
+  margin: 0 0 0.75rem;
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.85rem;
+}
+
+/* Preset quick-fill buttons (ComposeMessage) -------------------------------- */
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.preset-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.preset-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* Child inbox / message bubbles ---------------------------------------------- */
+
+.message-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.message-bubble {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.9rem;
+  background: var(--surface);
+}
+
+.message-bubble__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+}
+
+.message-bubble__text {
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.message-bubble--medium {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+}
+
+.message-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.message-warning__label {
+  color: var(--warning);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.message-reveal-btn {
+  border: 1px solid var(--warning-border);
+  background: transparent;
+  color: var(--warning);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.message-reveal-btn:hover {
+  background: var(--warning-bg);
+}
+
+.message-bubble--high {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.message-hidden {
+  color: var(--danger);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+/* Alert popup (toast) ------------------------------------------------------- */
+
+.alert-popup {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: min(320px, calc(100vw - 2.5rem));
+  background: var(--surface);
+  border: 1px solid var(--danger-border);
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 0.9rem 1rem;
+  z-index: 1000;
+  animation: toast-in 0.2s ease;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(12px, -6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+}
+
+.alert-popup__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.alert-popup__title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-transform: capitalize;
+}
+
+.alert-popup__close {
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.alert-popup__close:hover {
+  color: var(--text);
+}
+
+.alert-popup__meta {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin: 0.2rem 0 0.8rem;
+}
+
+.alert-popup__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.alert-popup__actions .btn {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+/* Blocklist --------------------------------------------------------------- */
+
+.blocklist-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.blocklist-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.55rem 0.9rem;
+  background: var(--surface);
+}
+
+.blocklist-row__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.section-gap {
+  margin-top: 1.1rem;
 }
 
 /* Coming-soon placeholder for stub pages ------------------------------------ */

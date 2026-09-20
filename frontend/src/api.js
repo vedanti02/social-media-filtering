@@ -49,3 +49,21 @@ export function addBlockedWord(word, parentId) {
 export function removeBlockedWord(word) {
   return request(`/blocklist/${encodeURIComponent(word)}`, { method: 'DELETE' })
 }
+
+// POST /blocked-senders
+export function blockSender(childId, sender) {
+  return request('/blocked-senders', {
+    method: 'POST',
+    body: JSON.stringify({ child_id: childId, sender }),
+  })
+}
+
+// GET /blocked-senders/{child_id}
+export function getBlockedSenders(childId) {
+  return request(`/blocked-senders/${childId}`)
+}
+
+// DELETE /blocked-senders/{id}
+export function unblockSender(id) {
+  return request(`/blocked-senders/${id}`, { method: 'DELETE' })
+}

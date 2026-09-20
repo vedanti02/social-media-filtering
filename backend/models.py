@@ -57,3 +57,18 @@ class BlockedWord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     parent_id: int = Field(foreign_key="parent.id", index=True)
     word: str = Field(index=True)
+
+
+class BlockedSender(SQLModel, table=True):
+    """A sender a parent has blocked for a specific child, e.g. from the
+
+    Alert popup ("Block sender"). Every future message from this sender for
+    this child is force-classified "high", regardless of what classify()
+    says -- mirrors the intent of BlockedWord but keyed on sender instead of
+    message content, since Alert never stores message text to check against.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    child_id: int = Field(foreign_key="child.id", index=True)
+    sender: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)

@@ -17,7 +17,15 @@ const STATUS_LABELS = {
   blocked: 'Blocked',
 }
 
-export default function ComposeMessage() {
+// Quick-fill examples for demos, tuned to land in each bucket under the
+// current keyword classifier (see backend/classifier.py TOXIC_TERMS).
+const PRESETS = [
+  { label: 'Low example', text: 'hey want to hang out after school?' },
+  { label: 'Medium example', text: "you're worthless and nobody actually likes you" },
+  { label: 'High example', text: "I'm going to kill you tomorrow" },
+]
+
+export default function ComposeMessage({ onSent }) {
   const [sender, setSender] = useState('')
   const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -38,6 +46,7 @@ export default function ComposeMessage() {
       })
       setResult(message)
       setText('')
+      onSent?.()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -56,8 +65,21 @@ export default function ComposeMessage() {
         </div>
       </div>
       <p className="card__subtitle">
-        Try it out: send a message as the child would, and see how it's scored for safety.
+        Try it out: send a message as the child would, and see how it's handled.
       </p>
+
+      <div className="preset-row">
+        {PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            className="preset-btn"
+            onClick={() => setText(preset.text)}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
 
       <form onSubmit={handleSubmit}>
         <div className="field">

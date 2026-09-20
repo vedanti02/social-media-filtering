@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from classifier import classify
-from models import Alert, BlockedWord, Child, Message, Parent  # noqa: F401
+from models import Alert, BlockedSender, BlockedWord, Child, Message, Parent  # noqa: F401
 
 DATABASE_URL = "sqlite:///./app.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -67,6 +67,21 @@ def create_message(payload: MessageCreate, session: Session = Depends(get_sessio
     result = classify(payload.text)
     score = float(result["score"])
     level = result["label"]  # "low" | "medium" | "high"
+
+    # A blocked sender always lands as "high", regardless of what this
+    # particular message says.
+    is_blocked_sender = (
+        session.exec(
+            select(BlockedSender).where(
+                BlockedSender.child_id == child.id,
+                BlockedSender.sender == payload.sender,
+            )
+        ).first()
+        is not None
+    )
+    if is_blocked_sender:
+        level = "high"
+
     is_severe = level == "high"
 
     message = Message(
@@ -100,10 +115,22 @@ def create_message(payload: MessageCreate, session: Session = Depends(get_sessio
     return message
 
 
-@app.get("/messages/{child_id}")
-def list_messages(child_id: int):
-    # TODO: query Message rows for child_id
-    return []
+@app.get("/messages/{child_id}", response_model=list[Message])
+def list_messages(
+    child_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+):
+    if session.get(Child, child_id) is None:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    statement = (
+        select(Message)
+        .where(Message.child_id == child_id)
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(limit)
+    )
+    return session.exec(statement).all()
 
 
 # --- Reports ------------------------------------------------------------------
@@ -162,3 +189,50 @@ def add_blocked_word(payload: dict):
 def remove_blocked_word(word: str):
     # TODO: delete BlockedWord matching word
     return {"word": word, "removed": True}
+
+
+# --- Blocked senders ------------------------------------------------------------
+
+
+class BlockedSenderCreate(SQLModel):
+    child_id: int
+    sender: str
+
+
+@app.post("/blocked-senders", response_model=BlockedSender, status_code=201)
+def block_sender(payload: BlockedSenderCreate, session: Session = Depends(get_session)):
+    if session.get(Child, payload.child_id) is None:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    existing = session.exec(
+        select(BlockedSender).where(
+            BlockedSender.child_id == payload.child_id,
+            BlockedSender.sender == payload.sender,
+        )
+    ).first()
+    if existing is not None:
+        return existing
+
+    blocked = BlockedSender(child_id=payload.child_id, sender=payload.sender)
+    session.add(blocked)
+    session.commit()
+    session.refresh(blocked)
+    return blocked
+
+
+@app.get("/blocked-senders/{child_id}", response_model=list[BlockedSender])
+def list_blocked_senders(child_id: int, session: Session = Depends(get_session)):
+    if session.get(Child, child_id) is None:
+        raise HTTPException(status_code=404, detail="Child not found")
+    statement = select(BlockedSender).where(BlockedSender.child_id == child_id)
+    return session.exec(statement).all()
+
+
+@app.delete("/blocked-senders/{blocked_id}")
+def unblock_sender(blocked_id: int, session: Session = Depends(get_session)):
+    blocked = session.get(BlockedSender, blocked_id)
+    if blocked is None:
+        raise HTTPException(status_code=404, detail="Blocked sender not found")
+    session.delete(blocked)
+    session.commit()
+    return {"id": blocked_id, "unblocked": True}
