@@ -7,19 +7,22 @@ from datetime import timedelta
 
 from sqlmodel import Session, SQLModel, select
 
+from auth import hash_password
 from main import engine
 from models import Alert, Child, Parent, utcnow
 
 SEED_PARENT_EMAIL = "parent@example.com"
+SEED_PARENT_PASSWORD = "demo1234"
 
 
 def get_or_create_parent_and_child(session: Session) -> Child:
     parent = session.exec(select(Parent).where(Parent.email == SEED_PARENT_EMAIL)).first()
     if parent is None:
         parent = Parent(name="Sam Parent", email=SEED_PARENT_EMAIL)
-        session.add(parent)
-        session.commit()
-        session.refresh(parent)
+    parent.password_hash = hash_password(SEED_PARENT_PASSWORD)
+    session.add(parent)
+    session.commit()
+    session.refresh(parent)
 
     child = session.exec(select(Child).where(Child.parent_id == parent.id)).first()
     if child is None:
@@ -65,6 +68,7 @@ def main() -> None:
         child = get_or_create_parent_and_child(session)
         count = seed_alerts(session, child)
         print(f"Seeded parent_id={child.parent_id} child_id={child.id} with {count} alerts.")
+        print(f"Demo login: {SEED_PARENT_EMAIL} / {SEED_PARENT_PASSWORD}")
 
 
 if __name__ == "__main__":

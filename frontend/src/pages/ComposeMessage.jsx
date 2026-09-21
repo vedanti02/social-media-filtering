@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { createMessage } from '../api.js'
 
-// TODO: replace with the logged-in child's id once auth/child-selection exists.
-const CHILD_ID = 1
-
 // Maps whatever status the classifier lands on to a label. Works for today's
 // binary "safe"/"flagged" and won't break once the classifier moves to
 // low/medium/high -- unrecognized statuses just fall back to a neutral look.
@@ -25,7 +22,7 @@ const PRESETS = [
   { label: 'High example', text: "I'm going to kill you tomorrow" },
 ]
 
-export default function ComposeMessage({ onSent }) {
+export default function ComposeMessage({ childId, onSent }) {
   const [sender, setSender] = useState('')
   const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -40,7 +37,7 @@ export default function ComposeMessage({ onSent }) {
     setResult(null)
     try {
       const message = await createMessage({
-        child_id: CHILD_ID,
+        child_id: childId,
         text,
         sender: sender.trim() || 'me',
       })

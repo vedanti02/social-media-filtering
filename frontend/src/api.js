@@ -2,13 +2,81 @@
 // production (set in Vercel); falls back to the local FastAPI dev server.
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+const TOKEN_KEY = 'auth_token'
+
+// localStorage can throw (private windows, blocked site data) -- fall back to no token.
+export function getToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setToken(token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token)
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+// App registers a callback so any request that comes back 401 while logged in
+// (expired/invalid token) sends the user back to the login page.
+let onUnauthorized = () => {}
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn
+}
+
 async function request(path, options = {}) {
+  const token = getToken()
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) {
+    if (res.status === 401 && token) {
+      clearToken()
+      onUnauthorized()
+    }
+    const body = await res.json().catch(() => null)
+    throw new Error(typeof body?.detail === 'string' ? body.detail : `${res.status} ${res.statusText}`)
+  }
   return res.json()
+}
+
+// POST /auth/signup  -> { token, parent_id, parent_name, child_id, child_name }
+export function signup({ name, email, password, childName }) {
+  return request('/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password, child_name: childName }),
+  })
+}
+
+// POST /auth/login  -> same shape as signup
+export function login(email, password) {
+  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+}
+
+// POST /auth/logout
+export function logout() {
+  return request('/auth/logout', { method: 'POST' })
+}
+
+// GET /auth/me  -> { parent_id, parent_name, child_id, child_name }
+export function getMe() {
+  return request('/auth/me')
 }
 
 // POST /messages

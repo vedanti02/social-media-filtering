@@ -161,7 +161,7 @@ def test_get_parent_returns_default_notify_channel(client, parent_and_child):
     assert res.json()["notify_channel"] == "email"
 
 
-def test_get_parent_404_for_unknown_parent(client):
+def test_get_parent_404_for_unknown_parent(client, parent_and_child):
     res = client.get("/parents/999")
     assert res.status_code == 404
 
@@ -186,7 +186,7 @@ def test_update_notify_channel_rejects_invalid_value(client, parent_and_child):
     assert client.get(f"/parents/{parent.id}").json()["notify_channel"] == "email"
 
 
-def test_update_notify_channel_404_for_unknown_parent(client):
+def test_update_notify_channel_404_for_unknown_parent(client, parent_and_child):
     res = client.patch("/parents/999/notify-channel", json={"channel": "push"})
     assert res.status_code == 404
 

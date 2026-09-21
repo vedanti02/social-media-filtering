@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getMessages } from '../api.js'
 
-// TODO: replace with the logged-in child's id once auth/child-selection exists.
-const CHILD_ID = 1
-
 // The backend stores UTC. SQLite drops the timezone, so the API may return a
 // naive ISO string; treat anything without an offset as UTC.
 function parseUtc(iso) {
@@ -26,7 +23,7 @@ function relativeTime(iso) {
 
 // This is the "Automated Moderate Actions" card from the board:
 // low -> shown normally, medium -> shown behind a warning, high -> hidden.
-export default function ChildInbox({ refreshKey }) {
+export default function ChildInbox({ childId, childName, refreshKey }) {
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -36,7 +33,7 @@ export default function ChildInbox({ refreshKey }) {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    getMessages(CHILD_ID)
+    getMessages(childId)
       .then((data) => {
         if (!cancelled) setMessages(data)
       })
@@ -59,7 +56,7 @@ export default function ChildInbox({ refreshKey }) {
     <section className="card">
       <div className="card__header">
         <div className="card__title">
-          <span className="card__title-icon">📱</span> Alex's Inbox
+          <span className="card__title-icon">📱</span> {childName}'s Inbox
         </div>
       </div>
       <p className="card__subtitle">

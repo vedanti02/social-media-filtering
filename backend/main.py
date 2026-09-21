@@ -8,11 +8,22 @@ from typing import Iterator, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from auth import hash_password, new_token, verify_password
 from classifier import classify
-from models import Alert, BlockedSender, BlockedWord, Child, Message, Parent, utcnow  # noqa: F401
+from models import (  # noqa: F401
+    Alert,
+    AuthToken,
+    BlockedSender,
+    BlockedWord,
+    Child,
+    Message,
+    Parent,
+    utcnow,
+)
 from notifications import send_alert_notification
 
 DATABASE_URL = "sqlite:///./app.db"
@@ -48,6 +59,32 @@ def get_session() -> Iterator[Session]:
         yield session
 
 
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_parent(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    session: Session = Depends(get_session),
+) -> Parent:
+    """Resolve the logged-in parent from the "Authorization: Bearer <token>" header."""
+    unauthorized = HTTPException(status_code=401, detail="Not authenticated")
+    if credentials is None:
+        raise unauthorized
+    row = session.exec(select(AuthToken).where(AuthToken.token == credentials.credentials)).first()
+    parent = session.get(Parent, row.parent_id) if row else None
+    if parent is None:
+        raise unauthorized
+    return parent
+
+
+def get_owned_child(session: Session, parent: Parent, child_id: int) -> Child:
+    """Fetch a child, treating one that belongs to another parent as not found."""
+    child = session.get(Child, child_id)
+    if child is None or child.parent_id != parent.id:
+        raise HTTPException(status_code=404, detail="Child not found")
+    return child
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     # TODO: replace with Alembic migrations if schema changes become frequent
@@ -63,14 +100,125 @@ class MessageCreate(SQLModel):
     sender: str
 
 
+# --- Auth ---------------------------------------------------------------------
+
+
+class ParentPublic(SQLModel):
+    id: int
+    name: str
+    email: str
+    notify_channel: str
+
+
+class SignupRequest(SQLModel):
+    name: str
+    email: str
+    password: str
+    child_name: str
+
+
+class LoginRequest(SQLModel):
+    email: str
+    password: str
+
+
+class AuthUser(SQLModel):
+    parent_id: int
+    parent_name: str
+    child_id: int
+    child_name: str
+
+
+class AuthSession(AuthUser):
+    token: str
+
+
+def _child_for(session: Session, parent: Parent) -> Child:
+    child = session.exec(select(Child).where(Child.parent_id == parent.id)).first()
+    if child is None:
+        child = Child(name="My child", parent_id=parent.id)
+        session.add(child)
+        session.commit()
+        session.refresh(child)
+    return child
+
+
+def _auth_user(session: Session, parent: Parent) -> AuthUser:
+    child = _child_for(session, parent)
+    return AuthUser(
+        parent_id=parent.id, parent_name=parent.name, child_id=child.id, child_name=child.name
+    )
+
+
+def _start_session(session: Session, parent: Parent) -> AuthSession:
+    token = new_token()
+    session.add(AuthToken(token=token, parent_id=parent.id))
+    session.commit()
+    return AuthSession(**_auth_user(session, parent).model_dump(), token=token)
+
+
+@app.post("/auth/signup", response_model=AuthSession, status_code=201)
+def signup(payload: SignupRequest, session: Session = Depends(get_session)):
+    name = payload.name.strip()
+    email = payload.email.strip().lower()
+    child_name = payload.child_name.strip()
+    if not name or not child_name:
+        raise HTTPException(status_code=400, detail="Name and child name are required")
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if session.exec(select(Parent).where(Parent.email == email)).first() is not None:
+        raise HTTPException(status_code=409, detail="An account with that email already exists")
+
+    parent = Parent(name=name, email=email, password_hash=hash_password(payload.password))
+    session.add(parent)
+    session.commit()
+    session.refresh(parent)
+    session.add(Child(name=child_name, parent_id=parent.id))
+    session.commit()
+    return _start_session(session, parent)
+
+
+@app.post("/auth/login", response_model=AuthSession)
+def login(payload: LoginRequest, session: Session = Depends(get_session)):
+    parent = session.exec(
+        select(Parent).where(Parent.email == payload.email.strip().lower())
+    ).first()
+    # Same error for "no such email" and "wrong password" so the response
+    # doesn't reveal which emails have accounts.
+    if parent is None or not verify_password(payload.password, parent.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    return _start_session(session, parent)
+
+
+@app.post("/auth/logout")
+def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    _: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    for row in session.exec(select(AuthToken).where(AuthToken.token == credentials.credentials)).all():
+        session.delete(row)
+    session.commit()
+    return {"logged_out": True}
+
+
+@app.get("/auth/me", response_model=AuthUser)
+def me(parent: Parent = Depends(get_current_parent), session: Session = Depends(get_session)):
+    return _auth_user(session, parent)
+
+
 # --- Messages -----------------------------------------------------------------
 
 
 @app.post("/messages", response_model=Message, status_code=201)
-def create_message(payload: MessageCreate, session: Session = Depends(get_session)):
-    child = session.get(Child, payload.child_id)
-    if child is None:
-        raise HTTPException(status_code=404, detail="Child not found")
+def create_message(
+    payload: MessageCreate,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    child = get_owned_child(session, parent, payload.child_id)
 
     # TODO: check text against the parent's BlockedWord list before/after classification
     result = classify(payload.text)
@@ -143,7 +291,6 @@ def create_message(payload: MessageCreate, session: Session = Depends(get_sessio
     if alert is not None:
         session.refresh(alert)
         if alert.notified:
-            parent = session.get(Parent, child.parent_id)
             send_alert_notification(parent, alert)
 
     return message
@@ -153,10 +300,10 @@ def create_message(payload: MessageCreate, session: Session = Depends(get_sessio
 def list_messages(
     child_id: int,
     limit: int = Query(default=50, ge=1, le=200),
+    parent: Parent = Depends(get_current_parent),
     session: Session = Depends(get_session),
 ):
-    if session.get(Child, child_id) is None:
-        raise HTTPException(status_code=404, detail="Child not found")
+    get_owned_child(session, parent, child_id)
 
     statement = (
         select(Message)
@@ -192,6 +339,7 @@ def _count_messages(
 def weekly_report(
     child_id: int,
     period: str = Query(default="weekly", pattern="^(daily|weekly)$"),
+    parent: Parent = Depends(get_current_parent),
     session: Session = Depends(get_session),
 ):
     """Aggregate messages/alerts for child_id over the requested period.
@@ -202,8 +350,7 @@ def weekly_report(
     this week" on the board. trend_pct is null when there's no prior-period
     activity to compare against (rather than dividing by zero).
     """
-    if session.get(Child, child_id) is None:
-        raise HTTPException(status_code=404, detail="Child not found")
+    get_owned_child(session, parent, child_id)
 
     period_days = 1 if period == "daily" else 7
     now = utcnow()
@@ -243,9 +390,10 @@ def weekly_report(
 def list_alerts(
     parent_id: int,
     limit: int = Query(default=20, ge=1, le=200),
+    parent: Parent = Depends(get_current_parent),
     session: Session = Depends(get_session),
 ):
-    if session.get(Parent, parent_id) is None:
+    if parent_id != parent.id:
         raise HTTPException(status_code=404, detail="Parent not found")
 
     statement = (
@@ -259,9 +407,13 @@ def list_alerts(
 
 
 @app.patch("/alerts/{alert_id}/read", response_model=Alert)
-def mark_alert_read(alert_id: int, session: Session = Depends(get_session)):
+def mark_alert_read(
+    alert_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
     alert = session.get(Alert, alert_id)
-    if alert is None:
+    if alert is None or session.get(Child, alert.child_id).parent_id != parent.id:
         raise HTTPException(status_code=404, detail="Alert not found")
     alert.is_read = True
     session.add(alert)
@@ -277,20 +429,21 @@ class NotifyChannelUpdate(SQLModel):
     channel: str
 
 
-@app.get("/parents/{parent_id}", response_model=Parent)
-def get_parent(parent_id: int, session: Session = Depends(get_session)):
-    parent = session.get(Parent, parent_id)
-    if parent is None:
+@app.get("/parents/{parent_id}", response_model=ParentPublic)
+def get_parent(parent_id: int, parent: Parent = Depends(get_current_parent)):
+    if parent_id != parent.id:
         raise HTTPException(status_code=404, detail="Parent not found")
     return parent
 
 
-@app.patch("/parents/{parent_id}/notify-channel", response_model=Parent)
+@app.patch("/parents/{parent_id}/notify-channel", response_model=ParentPublic)
 def update_notify_channel(
-    parent_id: int, payload: NotifyChannelUpdate, session: Session = Depends(get_session)
+    parent_id: int,
+    payload: NotifyChannelUpdate,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
 ):
-    parent = session.get(Parent, parent_id)
-    if parent is None:
+    if parent_id != parent.id:
         raise HTTPException(status_code=404, detail="Parent not found")
     if payload.channel not in NOTIFY_CHANNELS:
         raise HTTPException(
@@ -307,13 +460,13 @@ def update_notify_channel(
 
 
 @app.post("/blocklist")
-def add_blocked_word(payload: dict):
+def add_blocked_word(payload: dict, _: Parent = Depends(get_current_parent)):
     # TODO: persist BlockedWord for the given parent
     return {"word": payload.get("word", ""), "added": True}
 
 
 @app.delete("/blocklist/{word}")
-def remove_blocked_word(word: str):
+def remove_blocked_word(word: str, _: Parent = Depends(get_current_parent)):
     # TODO: delete BlockedWord matching word
     return {"word": word, "removed": True}
 
@@ -327,9 +480,12 @@ class BlockedSenderCreate(SQLModel):
 
 
 @app.post("/blocked-senders", response_model=BlockedSender, status_code=201)
-def block_sender(payload: BlockedSenderCreate, session: Session = Depends(get_session)):
-    if session.get(Child, payload.child_id) is None:
-        raise HTTPException(status_code=404, detail="Child not found")
+def block_sender(
+    payload: BlockedSenderCreate,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    get_owned_child(session, parent, payload.child_id)
 
     existing = session.exec(
         select(BlockedSender).where(
@@ -348,17 +504,24 @@ def block_sender(payload: BlockedSenderCreate, session: Session = Depends(get_se
 
 
 @app.get("/blocked-senders/{child_id}", response_model=list[BlockedSender])
-def list_blocked_senders(child_id: int, session: Session = Depends(get_session)):
-    if session.get(Child, child_id) is None:
-        raise HTTPException(status_code=404, detail="Child not found")
+def list_blocked_senders(
+    child_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    get_owned_child(session, parent, child_id)
     statement = select(BlockedSender).where(BlockedSender.child_id == child_id)
     return session.exec(statement).all()
 
 
 @app.delete("/blocked-senders/{blocked_id}")
-def unblock_sender(blocked_id: int, session: Session = Depends(get_session)):
+def unblock_sender(
+    blocked_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
     blocked = session.get(BlockedSender, blocked_id)
-    if blocked is None:
+    if blocked is None or session.get(Child, blocked.child_id).parent_id != parent.id:
         raise HTTPException(status_code=404, detail="Blocked sender not found")
     session.delete(blocked)
     session.commit()

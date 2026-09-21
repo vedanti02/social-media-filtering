@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getWeeklyReport } from '../api.js'
 
-// TODO: replace with the logged-in child's id once auth/child-selection exists.
-const CHILD_ID = 1
-
 const PERIODS = [
   { key: 'daily', label: 'Daily' },
   { key: 'weekly', label: 'Weekly' },
@@ -27,7 +24,7 @@ function TrendBadge({ trendPct }) {
   )
 }
 
-export default function WeeklyReport({ refreshKey }) {
+export default function WeeklyReport({ childId, childName, refreshKey }) {
   const [period, setPeriod] = useState('weekly')
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -36,7 +33,7 @@ export default function WeeklyReport({ refreshKey }) {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    getWeeklyReport(CHILD_ID, period)
+    getWeeklyReport(childId, period)
       .then((data) => {
         if (!cancelled) setReport(data)
       })
@@ -58,7 +55,7 @@ export default function WeeklyReport({ refreshKey }) {
           <span className="card__title-icon">📊</span> Activity Report
         </div>
       </div>
-      <p className="card__subtitle">A summary of messages, flags, and blocks for Alex.</p>
+      <p className="card__subtitle">A summary of messages, flags, and blocks for {childName}.</p>
 
       <div className="preset-row">
         {PERIODS.map((p) => (

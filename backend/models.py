@@ -17,7 +17,16 @@ class Parent(SQLModel, table=True):
     name: str
     email: str = Field(index=True, unique=True)
     notify_channel: str = "email"  # "email" | "push"
-    # TODO: password hash / auth fields
+    password_hash: str = ""  # see auth.py; never return this from an endpoint
+
+
+class AuthToken(SQLModel, table=True):
+    """Login session. One row per login; deleting the row is logout."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token: str = Field(index=True, unique=True)
+    parent_id: int = Field(foreign_key="parent.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class Child(SQLModel, table=True):

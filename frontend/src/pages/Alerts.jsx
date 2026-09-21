@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { blockSender, getAlerts, markAlertRead } from '../api.js'
 
-// TODO: replace with the logged-in parent's id / selected child once auth exists.
-const PARENT_ID = 1
-const CHILD_ID = 1
-
 // The backend stores UTC. SQLite drops the timezone, so the API may return a
 // naive ISO string; treat anything without an offset as UTC.
 function parseUtc(iso) {
@@ -29,7 +25,7 @@ function formatCategory(category) {
   return category.replaceAll('_', ' ')
 }
 
-export default function Alerts({ refreshKey, onBlocked }) {
+export default function Alerts({ parentId, childId, childName, refreshKey, onBlocked }) {
   const [alerts, setAlerts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -42,7 +38,7 @@ export default function Alerts({ refreshKey, onBlocked }) {
 
   useEffect(() => {
     let cancelled = false
-    getAlerts(PARENT_ID)
+    getAlerts(parentId)
       .then((data) => {
         if (cancelled) return
         if (seenIds.current) {
@@ -77,7 +73,7 @@ export default function Alerts({ refreshKey, onBlocked }) {
 
   async function handleBlockSender(alert) {
     try {
-      await blockSender(CHILD_ID, alert.sender)
+      await blockSender(childId, alert.sender)
       setBlockedSender(alert.sender)
       onBlocked?.()
     } catch (err) {
@@ -109,7 +105,7 @@ export default function Alerts({ refreshKey, onBlocked }) {
 
       {error && <p className="error-banner" role="alert">Something went wrong: {error}</p>}
       {blockedSender && (
-        <p className="info-banner">🚫 {blockedSender} is now blocked for Alex.</p>
+        <p className="info-banner">🚫 {blockedSender} is now blocked for {childName}.</p>
       )}
       {loading ? (
         <p className="loading-state">Loading…</p>

@@ -1,22 +1,19 @@
 import { useEffect, useState } from 'react'
 import { getParent, updateNotifyChannel } from '../api.js'
 
-// TODO: replace with the logged-in parent's id once auth exists.
-const PARENT_ID = 1
-
 const CHANNELS = [
   { value: 'email', label: '✉️ Email' },
   { value: 'push', label: '📲 Push' },
 ]
 
-export default function NotificationSettings() {
+export default function NotificationSettings({ parentId }) {
   const [channel, setChannel] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
-    getParent(PARENT_ID)
+    getParent(parentId)
       .then((parent) => {
         if (!cancelled) setChannel(parent.notify_channel)
       })
@@ -37,7 +34,7 @@ export default function NotificationSettings() {
     // Optimistic update; roll back if the request fails.
     setChannel(value)
     try {
-      await updateNotifyChannel(PARENT_ID, value)
+      await updateNotifyChannel(parentId, value)
     } catch (err) {
       setChannel(previous)
       setError(err.message)

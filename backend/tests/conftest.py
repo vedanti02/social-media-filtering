@@ -8,9 +8,9 @@ manager.
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
-from main import app, get_session
+from main import app, get_current_parent, get_session
 from models import Child, Parent
 
 
@@ -24,8 +24,10 @@ def session_fixture():
         yield session
 
 
-@pytest.fixture(name="client")
-def client_fixture(session):
+@pytest.fixture(name="anon_client")
+def anon_client_fixture(session):
+    """Real auth: no login bypass. Use this to test signup/login/401s."""
+
     def get_session_override():
         return session
 
@@ -33,6 +35,18 @@ def client_fixture(session):
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(name="client")
+def client_fixture(session, anon_client):
+    """Acts as the logged-in parent (the first Parent row), so feature tests
+    don't each have to sign up and log in first."""
+
+    def current_parent_override():
+        return session.exec(select(Parent)).first()
+
+    app.dependency_overrides[get_current_parent] = current_parent_override
+    yield anon_client
 
 
 @pytest.fixture

@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react'
 import { getBlockedSenders, unblockSender } from '../api.js'
 
-// TODO: replace with the logged-in child's id once auth/child-selection exists.
-const CHILD_ID = 1
-
 // TODO: fetch blocked words, wire addBlockedWord / removeBlockedWord from ../api.js.
-export default function Blocklist({ refreshKey }) {
+export default function Blocklist({ childId, childName, refreshKey }) {
   const [senders, setSenders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -14,7 +11,7 @@ export default function Blocklist({ refreshKey }) {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    getBlockedSenders(CHILD_ID)
+    getBlockedSenders(childId)
       .then((data) => {
         if (!cancelled) setSenders(data)
       })
@@ -51,7 +48,7 @@ export default function Blocklist({ refreshKey }) {
         )}
       </div>
       <p className="card__subtitle">
-        Senders blocked for Alex — every future message from them is auto-flagged.
+        Senders blocked for {childName} — every future message from them is auto-flagged.
       </p>
 
       {error && <p className="error-banner" role="alert">Something went wrong: {error}</p>}
