@@ -50,7 +50,7 @@ export default function App() {
           </div>
           <div className="view-group__grid">
             <Alerts refreshKey={refreshKey} onBlocked={() => setBlocklistKey((k) => k + 1)} />
-            <WeeklyReport />
+            <WeeklyReport refreshKey={refreshKey} />
           </div>
         </section>
       </main>

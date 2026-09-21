@@ -22,9 +22,9 @@ export function getMessages(childId) {
   return request(`/messages/${childId}`)
 }
 
-// GET /reports/weekly/{child_id}
-export function getWeeklyReport(childId) {
-  return request(`/reports/weekly/${childId}`)
+// GET /reports/weekly/{child_id}?period=daily|weekly
+export function getWeeklyReport(childId, period = 'weekly') {
+  return request(`/reports/weekly/${childId}?period=${period}`)
 }
 
 // GET /alerts/{parent_id}?limit=N  (newest first)

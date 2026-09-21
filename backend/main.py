@@ -3,14 +3,16 @@
 Run with:  uvicorn main:app --reload
 """
 import os
-from typing import Iterator
+from datetime import timedelta
+from typing import Iterator, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from classifier import classify
-from models import Alert, BlockedSender, BlockedWord, Child, Message, Parent  # noqa: F401
+from models import Alert, BlockedSender, BlockedWord, Child, Message, Parent, utcnow  # noqa: F401
 
 DATABASE_URL = "sqlite:///./app.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -136,10 +138,70 @@ def list_messages(
 # --- Reports ------------------------------------------------------------------
 
 
+def _count_messages(
+    session: Session,
+    child_id: int,
+    start,
+    end,
+    statuses: Optional[tuple[str, ...]] = None,
+) -> int:
+    """Count Message rows for child_id in [start, end), optionally filtered by status."""
+    statement = select(func.count(Message.id)).where(
+        Message.child_id == child_id,
+        Message.created_at >= start,
+        Message.created_at < end,
+    )
+    if statuses:
+        statement = statement.where(Message.status.in_(statuses))
+    return session.exec(statement).one()
+
+
 @app.get("/reports/weekly/{child_id}")
-def weekly_report(child_id: int):
-    # TODO: aggregate messages/alerts from the last 7 days for child_id
-    return {"child_id": child_id, "total_messages": 0, "flagged": 0, "blocked": 0}
+def weekly_report(
+    child_id: int,
+    period: str = Query(default="weekly", pattern="^(daily|weekly)$"),
+    session: Session = Depends(get_session),
+):
+    """Aggregate messages/alerts for child_id over the requested period.
+
+    period="daily" looks at the last 1 day, period="weekly" (default) the last
+    7 days. trend_pct compares the current period's flagged-message count to
+    the immediately preceding period of the same length -- e.g. "flags up 20%
+    this week" on the board. trend_pct is null when there's no prior-period
+    activity to compare against (rather than dividing by zero).
+    """
+    if session.get(Child, child_id) is None:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    period_days = 1 if period == "daily" else 7
+    now = utcnow()
+    current_start = now - timedelta(days=period_days)
+    previous_start = now - timedelta(days=2 * period_days)
+
+    flagged_statuses = ("medium", "high")
+    blocked_statuses = ("high",)  # high-toxicity messages are auto-hidden from the child
+
+    total_messages = _count_messages(session, child_id, current_start, now)
+    flagged = _count_messages(session, child_id, current_start, now, flagged_statuses)
+    blocked = _count_messages(session, child_id, current_start, now, blocked_statuses)
+    previous_flagged = _count_messages(session, child_id, previous_start, current_start, flagged_statuses)
+
+    if previous_flagged > 0:
+        trend_pct = round((flagged - previous_flagged) / previous_flagged * 100, 1)
+    elif flagged > 0:
+        trend_pct = None  # new activity, no prior-period baseline to compare against
+    else:
+        trend_pct = 0.0
+
+    return {
+        "child_id": child_id,
+        "period": period,
+        "period_days": period_days,
+        "total_messages": total_messages,
+        "flagged": flagged,
+        "blocked": blocked,
+        "trend_pct": trend_pct,
+    }
 
 
 # --- Alerts -------------------------------------------------------------------
