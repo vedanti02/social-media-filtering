@@ -16,6 +16,7 @@ class Parent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     email: str = Field(index=True, unique=True)
+    notify_channel: str = "email"  # "email" | "push"
     # TODO: password hash / auth fields
 
 
@@ -50,6 +51,10 @@ class Alert(SQLModel, table=True):
     category: str  # classifier label, e.g. "harassment", "threat"
     severity_score: float
     is_read: bool = False
+    # False when this alert was throttled -- see ALERT_THROTTLE_MINUTES in
+    # main.py. The alert is still recorded either way; this only tracks
+    # whether a notification was actually sent for it.
+    notified: bool = False
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

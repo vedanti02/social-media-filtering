@@ -286,6 +286,11 @@ button {
   font-size: 0.8rem;
 }
 
+.btn-group {
+  display: flex;
+  gap: 0.6rem;
+}
+
 /* Badges / status ---------------------------------------------------------- */
 
 .badge {

@@ -4,6 +4,7 @@ import ChildInbox from './pages/ChildInbox.jsx'
 import Alerts from './pages/Alerts.jsx'
 import WeeklyReport from './pages/WeeklyReport.jsx'
 import Blocklist from './pages/Blocklist.jsx'
+import NotificationSettings from './pages/NotificationSettings.jsx'
 
 // TODO: add routing (e.g. react-router) and auth; for now render all pages.
 export default function App() {
@@ -51,6 +52,7 @@ export default function App() {
           <div className="view-group__grid">
             <Alerts refreshKey={refreshKey} onBlocked={() => setBlocklistKey((k) => k + 1)} />
             <WeeklyReport refreshKey={refreshKey} />
+            <NotificationSettings />
           </div>
         </section>
       </main>

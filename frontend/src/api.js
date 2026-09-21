@@ -67,3 +67,16 @@ export function getBlockedSenders(childId) {
 export function unblockSender(id) {
   return request(`/blocked-senders/${id}`, { method: 'DELETE' })
 }
+
+// GET /parents/{parent_id}
+export function getParent(parentId) {
+  return request(`/parents/${parentId}`)
+}
+
+// PATCH /parents/{parent_id}/notify-channel
+export function updateNotifyChannel(parentId, channel) {
+  return request(`/parents/${parentId}/notify-channel`, {
+    method: 'PATCH',
+    body: JSON.stringify({ channel }),
+  })
+}

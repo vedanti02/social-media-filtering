@@ -3,7 +3,7 @@
 Run with:  uvicorn main:app --reload
 """
 import os
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Iterator, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -13,9 +13,16 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from classifier import classify
 from models import Alert, BlockedSender, BlockedWord, Child, Message, Parent, utcnow  # noqa: F401
+from notifications import send_alert_notification
 
 DATABASE_URL = "sqlite:///./app.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+# How long to wait before re-notifying a parent about the same (child, sender)
+# pair. The Alert row is still recorded every time; this only throttles the
+# notification send, so repeat messages from one sender don't spam the parent.
+ALERT_THROTTLE_MINUTES = int(os.environ.get("ALERT_THROTTLE_MINUTES", "15"))
+NOTIFY_CHANNELS = ("email", "push")
 
 app = FastAPI(title="Child Safety Messaging API")
 
@@ -98,22 +105,47 @@ def create_message(payload: MessageCreate, session: Session = Depends(get_sessio
     # A high-toxicity message is the only thing that raises an alert. The
     # alert intentionally carries no message text and no reference to the
     # Message row -- see the Alert docstring in models.py.
+    alert = None
     if is_severe:
-        session.add(
-            Alert(
-                child_id=child.id,
-                sender=payload.sender,
-                # TODO: derive a harm-type category (e.g. "threat", "harassment")
-                # once the classifier detects categories, not just severity.
-                category="high_toxicity",
-                severity_score=score,
+        last_notified = session.exec(
+            select(Alert)
+            .where(
+                Alert.child_id == child.id,
+                Alert.sender == payload.sender,
+                Alert.notified == True,  # noqa: E712
             )
+            .order_by(Alert.created_at.desc())
+        ).first()
+        # SQLite drops timezone info, so a round-tripped created_at may come
+        # back naive; treat anything without a tzinfo as UTC (see parseUtc in
+        # frontend/src/pages/Alerts.jsx for the same issue on the frontend).
+        throttled = False
+        if last_notified is not None:
+            last_notified_at = last_notified.created_at
+            if last_notified_at.tzinfo is None:
+                last_notified_at = last_notified_at.replace(tzinfo=timezone.utc)
+            throttled = utcnow() - last_notified_at < timedelta(minutes=ALERT_THROTTLE_MINUTES)
+
+        alert = Alert(
+            child_id=child.id,
+            sender=payload.sender,
+            # TODO: derive a harm-type category (e.g. "threat", "harassment")
+            # once the classifier detects categories, not just severity.
+            category="high_toxicity",
+            severity_score=score,
+            notified=not throttled,
         )
-        # TODO: push notification / email / SMS to the parent would hook in here
-        # TODO: throttling / daily digest instead of one alert per message
+        session.add(alert)
 
     session.commit()
     session.refresh(message)
+
+    if alert is not None:
+        session.refresh(alert)
+        if alert.notified:
+            parent = session.get(Parent, child.parent_id)
+            send_alert_notification(parent, alert)
+
     return message
 
 
@@ -236,6 +268,39 @@ def mark_alert_read(alert_id: int, session: Session = Depends(get_session)):
     session.commit()
     session.refresh(alert)
     return alert
+
+
+# --- Notification preferences --------------------------------------------------
+
+
+class NotifyChannelUpdate(SQLModel):
+    channel: str
+
+
+@app.get("/parents/{parent_id}", response_model=Parent)
+def get_parent(parent_id: int, session: Session = Depends(get_session)):
+    parent = session.get(Parent, parent_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    return parent
+
+
+@app.patch("/parents/{parent_id}/notify-channel", response_model=Parent)
+def update_notify_channel(
+    parent_id: int, payload: NotifyChannelUpdate, session: Session = Depends(get_session)
+):
+    parent = session.get(Parent, parent_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    if payload.channel not in NOTIFY_CHANNELS:
+        raise HTTPException(
+            status_code=400, detail=f"channel must be one of {NOTIFY_CHANNELS}"
+        )
+    parent.notify_channel = payload.channel
+    session.add(parent)
+    session.commit()
+    session.refresh(parent)
+    return parent
 
 
 # --- Blocklist ----------------------------------------------------------------
