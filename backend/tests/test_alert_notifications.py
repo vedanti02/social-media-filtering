@@ -178,6 +178,37 @@ def test_mark_alert_not_concern_404_for_unknown_alert(client, parent_and_child):
     assert res.status_code == 404
 
 
+# --- Confidence score on alerts -------------------------------------------------
+
+
+def test_alert_exposes_the_classifiers_severity_score(client, parent_and_child, monkeypatch):
+    """The alert card shows a confidence score in the UI -- it just needs the
+    already-computed severity_score to actually reach the API response."""
+    parent, child = parent_and_child
+    patch_notifier(monkeypatch)
+
+    post_message(client, child.id, SEVERE_TEXT, "bully1")
+    alert = client.get(f"/alerts/{parent.id}").json()[0]
+
+    assert 0.0 <= alert["severity_score"] <= 1.0
+    import classifier
+    assert alert["severity_score"] == classifier.classify(SEVERE_TEXT)["score"]
+
+
+def test_alert_forced_high_by_blocklist_keeps_its_real_score(client, parent_and_child):
+    """A blocked word forces the message to 'high' regardless of what the
+    classifier scored it -- the alert's severity_score should still reflect
+    the classifier's actual confidence, not be inflated to look severe."""
+    parent, child = parent_and_child
+    client.post("/blocklist", json={"word": "meanie"})
+
+    post_message(client, child.id, "you're such a meanie", "friend1")
+    alert = client.get(f"/alerts/{parent.id}").json()[0]
+
+    # "meanie" isn't in TOXIC_TERMS, so the classifier itself scored this low.
+    assert alert["severity_score"] < 0.35
+
+
 # --- Notification channel preference -------------------------------------------
 
 
