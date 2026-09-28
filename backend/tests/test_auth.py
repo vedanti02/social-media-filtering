@@ -89,3 +89,18 @@ def test_parent_cannot_access_another_parents_data(anon_client):
     # ...while their own child works fine.
     own = anon_client.get(f"/messages/{b['child_id']}", headers=auth(b["token"]))
     assert own.status_code == 200
+
+
+def test_parent_cannot_mark_another_parents_alert_not_concern(anon_client):
+    a = signup(anon_client).json()
+    b = signup(anon_client, email="other2@example.com", child_name="Riley").json()
+
+    anon_client.post(
+        "/messages",
+        json={"child_id": a["child_id"], "text": "I will kill you", "sender": "bully1"},
+        headers=auth(a["token"]),
+    )
+    alert = anon_client.get(f"/alerts/{a['parent_id']}", headers=auth(a["token"])).json()[0]
+
+    res = anon_client.patch(f"/alerts/{alert['id']}/not-concern", headers=auth(b["token"]))
+    assert res.status_code == 404

@@ -105,6 +105,11 @@ export function markAlertRead(alertId) {
   return request(`/alerts/${alertId}/read`, { method: 'PATCH' })
 }
 
+// PATCH /alerts/{alert_id}/not-concern
+export function markAlertNotConcern(alertId) {
+  return request(`/alerts/${alertId}/not-concern`, { method: 'PATCH' })
+}
+
 // GET /blocklist  (words blocked by the logged-in parent)
 export function getBlockedWords() {
   return request('/blocklist')

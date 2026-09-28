@@ -409,16 +409,42 @@ def list_alerts(
     return session.exec(statement).all()
 
 
+def _get_owned_alert(session: Session, parent: Parent, alert_id: int) -> Alert:
+    alert = session.get(Alert, alert_id)
+    if alert is None or session.get(Child, alert.child_id).parent_id != parent.id:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+
 @app.patch("/alerts/{alert_id}/read", response_model=Alert)
 def mark_alert_read(
     alert_id: int,
     parent: Parent = Depends(get_current_parent),
     session: Session = Depends(get_session),
 ):
-    alert = session.get(Alert, alert_id)
-    if alert is None or session.get(Child, alert.child_id).parent_id != parent.id:
-        raise HTTPException(status_code=404, detail="Alert not found")
+    alert = _get_owned_alert(session, parent, alert_id)
     alert.is_read = True
+    session.add(alert)
+    session.commit()
+    session.refresh(alert)
+    return alert
+
+
+@app.patch("/alerts/{alert_id}/not-concern", response_model=Alert)
+def mark_alert_not_concern(
+    alert_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    """Parent reviewed this alert and confirmed it wasn't actually a problem.
+
+    Distinct from mark_alert_read: a parent can read an alert without judging
+    it. This is an explicit "false positive" signal -- see the TODO on
+    Alert.not_concern in models.py.
+    """
+    alert = _get_owned_alert(session, parent, alert_id)
+    alert.not_concern = True
+    alert.is_read = True  # reviewing it implies it's been seen
     session.add(alert)
     session.commit()
     session.refresh(alert)

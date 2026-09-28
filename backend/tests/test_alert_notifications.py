@@ -151,6 +151,33 @@ def test_throttled_alert_still_visible_and_markable_as_read(client, parent_and_c
     assert res.json()["is_read"] is True
 
 
+# --- Marking an alert "not a concern" ------------------------------------------
+
+
+def test_mark_alert_not_concern_sets_flag_and_marks_read(client, parent_and_child, monkeypatch):
+    parent, child = parent_and_child
+    patch_notifier(monkeypatch)
+
+    post_message(client, child.id, SEVERE_TEXT, "bully1")
+    alert = client.get(f"/alerts/{parent.id}").json()[0]
+    assert alert["not_concern"] is False
+
+    res = client.patch(f"/alerts/{alert['id']}/not-concern")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["not_concern"] is True
+    assert body["is_read"] is True  # reviewing it implies it's been seen
+
+    # Persisted, not just returned.
+    refetched = client.get(f"/alerts/{parent.id}").json()[0]
+    assert refetched["not_concern"] is True
+
+
+def test_mark_alert_not_concern_404_for_unknown_alert(client, parent_and_child):
+    res = client.patch("/alerts/999/not-concern")
+    assert res.status_code == 404
+
+
 # --- Notification channel preference -------------------------------------------
 
 
