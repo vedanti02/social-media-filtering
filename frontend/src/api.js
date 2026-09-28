@@ -105,12 +105,14 @@ export function markAlertRead(alertId) {
   return request(`/alerts/${alertId}/read`, { method: 'PATCH' })
 }
 
+// GET /blocklist  (words blocked by the logged-in parent)
+export function getBlockedWords() {
+  return request('/blocklist')
+}
+
 // POST /blocklist
-export function addBlockedWord(word, parentId) {
-  return request('/blocklist', {
-    method: 'POST',
-    body: JSON.stringify({ word, parent_id: parentId }),
-  })
+export function addBlockedWord(word) {
+  return request('/blocklist', { method: 'POST', body: JSON.stringify({ word }) })
 }
 
 // DELETE /blocklist/{word}

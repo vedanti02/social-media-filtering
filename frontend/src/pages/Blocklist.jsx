@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react'
-import { getBlockedSenders, unblockSender } from '../api.js'
+import { addBlockedWord, getBlockedSenders, getBlockedWords, removeBlockedWord, unblockSender } from '../api.js'
 
-// TODO: fetch blocked words, wire addBlockedWord / removeBlockedWord from ../api.js.
 export default function Blocklist({ childId, childName, refreshKey }) {
   const [senders, setSenders] = useState([])
+  const [words, setWords] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const words = []
+  const [newWord, setNewWord] = useState('')
+  const [addingWord, setAddingWord] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    getBlockedSenders(childId)
-      .then((data) => {
-        if (!cancelled) setSenders(data)
+    Promise.all([getBlockedSenders(childId), getBlockedWords()])
+      .then(([senderData, wordData]) => {
+        if (!cancelled) {
+          setSenders(senderData)
+          setWords(wordData)
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
@@ -33,6 +37,33 @@ export default function Blocklist({ childId, childName, refreshKey }) {
       await unblockSender(sender.id)
     } catch (err) {
       setSenders((prev) => [...prev, sender].sort((a, b) => a.id - b.id))
+      setError(err.message)
+    }
+  }
+
+  async function handleAddWord(event) {
+    event.preventDefault()
+    const word = newWord.trim()
+    if (!word || addingWord) return
+    setAddingWord(true)
+    setError(null)
+    try {
+      const created = await addBlockedWord(word)
+      setWords((prev) => (prev.some((w) => w.id === created.id) ? prev : [...prev, created]))
+      setNewWord('')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setAddingWord(false)
+    }
+  }
+
+  async function handleRemoveWord(entry) {
+    setWords((prev) => prev.filter((w) => w.id !== entry.id))
+    try {
+      await removeBlockedWord(entry.word)
+    } catch (err) {
+      setWords((prev) => [...prev, entry].sort((a, b) => a.id - b.id))
       setError(err.message)
     }
   }
@@ -70,13 +101,32 @@ export default function Blocklist({ childId, childName, refreshKey }) {
       )}
 
       <div className="section-gap">
-        {words.length === 0 ? (
-          <div className="coming-soon">Word-based blocklist is coming soon.</div>
+        <p className="card__subtitle">
+          Words that automatically mark a message high-toxicity, regardless of who sent it.
+        </p>
+        <form className="inline-form" onSubmit={handleAddWord}>
+          <input
+            type="text"
+            value={newWord}
+            onChange={(e) => setNewWord(e.target.value)}
+            placeholder="Add a word or phrase…"
+            aria-label="New blocked word"
+          />
+          <button className="btn btn--sm" type="submit" disabled={addingWord || !newWord.trim()}>
+            Add
+          </button>
+        </form>
+
+        {!loading && words.length === 0 ? (
+          <p className="empty-state">No words blocked yet.</p>
         ) : (
-          <ul className="alert-list">
+          <ul className="blocklist-list">
             {words.map((entry) => (
-              <li key={entry.id} className="alert-card">
-                {entry.word}
+              <li key={entry.id} className="blocklist-row">
+                <span className="blocklist-row__name">{entry.word}</span>
+                <button className="btn btn--ghost btn--sm" onClick={() => handleRemoveWord(entry)}>
+                  Remove
+                </button>
               </li>
             ))}
           </ul>

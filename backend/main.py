@@ -49,8 +49,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -220,13 +220,12 @@ def create_message(
 ):
     child = get_owned_child(session, parent, payload.child_id)
 
-    # TODO: check text against the parent's BlockedWord list before/after classification
     result = classify(payload.text)
     score = float(result["score"])
     level = result["label"]  # "low" | "medium" | "high"
 
-    # A blocked sender always lands as "high", regardless of what this
-    # particular message says.
+    # A blocked sender or a message containing one of the parent's blocked
+    # words always lands as "high", regardless of what classify() said.
     is_blocked_sender = (
         session.exec(
             select(BlockedSender).where(
@@ -236,7 +235,11 @@ def create_message(
         ).first()
         is not None
     )
-    if is_blocked_sender:
+    blocked_words = session.exec(
+        select(BlockedWord).where(BlockedWord.parent_id == parent.id)
+    ).all()
+    has_blocked_word = any(bw.word in payload.text.lower() for bw in blocked_words)
+    if is_blocked_sender or has_blocked_word:
         level = "high"
 
     is_severe = level == "high"
@@ -459,16 +462,51 @@ def update_notify_channel(
 # --- Blocklist ----------------------------------------------------------------
 
 
-@app.post("/blocklist")
-def add_blocked_word(payload: dict, _: Parent = Depends(get_current_parent)):
-    # TODO: persist BlockedWord for the given parent
-    return {"word": payload.get("word", ""), "added": True}
+class BlockedWordCreate(SQLModel):
+    word: str
+
+
+@app.get("/blocklist", response_model=list[BlockedWord])
+def list_blocked_words(parent: Parent = Depends(get_current_parent), session: Session = Depends(get_session)):
+    statement = select(BlockedWord).where(BlockedWord.parent_id == parent.id)
+    return session.exec(statement).all()
+
+
+@app.post("/blocklist", response_model=BlockedWord, status_code=201)
+def add_blocked_word(
+    payload: BlockedWordCreate,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    word = payload.word.strip().lower()
+    if not word:
+        raise HTTPException(status_code=400, detail="word is required")
+
+    existing = session.exec(
+        select(BlockedWord).where(BlockedWord.parent_id == parent.id, BlockedWord.word == word)
+    ).first()
+    if existing is not None:
+        return existing
+
+    blocked = BlockedWord(parent_id=parent.id, word=word)
+    session.add(blocked)
+    session.commit()
+    session.refresh(blocked)
+    return blocked
 
 
 @app.delete("/blocklist/{word}")
-def remove_blocked_word(word: str, _: Parent = Depends(get_current_parent)):
-    # TODO: delete BlockedWord matching word
-    return {"word": word, "removed": True}
+def remove_blocked_word(
+    word: str, parent: Parent = Depends(get_current_parent), session: Session = Depends(get_session)
+):
+    statement = select(BlockedWord).where(
+        BlockedWord.parent_id == parent.id, BlockedWord.word == word.strip().lower()
+    )
+    matches = session.exec(statement).all()
+    for row in matches:
+        session.delete(row)
+    session.commit()
+    return {"word": word, "removed": len(matches) > 0}
 
 
 # --- Blocked senders ------------------------------------------------------------
