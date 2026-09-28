@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { blockSender, getAlerts, markAlertNotConcern, markAlertRead } from '../api.js'
 import { relativeTime } from '../utils/time.js'
+import { confidenceLevel, confidencePercent } from '../utils/toxicity.js'
 
 function formatCategory(category) {
   return category.replaceAll('_', ' ')
@@ -121,6 +122,9 @@ export default function Alerts({ parentId, childId, childName, refreshKey, onBlo
               <div className="alert-card__title">
                 {!alert.is_read && <span className="alert-card__dot" />}
                 {formatCategory(alert.category)}
+                <span className={`badge badge--${confidenceLevel(alert.severity_score)}`}>
+                  {confidencePercent(alert.severity_score)}% confidence
+                </span>
                 {alert.not_concern && <span className="badge badge--safe">Not a concern</span>}
               </div>
               <div className="alert-card__meta">
@@ -145,7 +149,12 @@ export default function Alerts({ parentId, childId, childName, refreshKey, onBlo
               ×
             </button>
           </div>
-          <p className="alert-popup__meta">from {popupAlert.sender}</p>
+          <p className="alert-popup__meta">
+            from {popupAlert.sender} ·{' '}
+            <span className={`badge badge--${confidenceLevel(popupAlert.severity_score)}`}>
+              {confidencePercent(popupAlert.severity_score)}% confidence
+            </span>
+          </p>
           <div className="alert-popup__actions">
             <button className="btn btn--danger" onClick={() => handleBlockSender(popupAlert)}>
               Block sender
