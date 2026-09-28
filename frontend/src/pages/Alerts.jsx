@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { blockSender, getAlerts, markAlertRead } from '../api.js'
+import { blockSender, getAlerts, markAlertNotConcern, markAlertRead } from '../api.js'
 import { relativeTime } from '../utils/time.js'
 
 function formatCategory(category) {
@@ -70,6 +70,23 @@ export default function Alerts({ parentId, childId, childName, refreshKey, onBlo
     setPopupAlert(null)
   }
 
+  async function handleNotConcern(alert) {
+    // Optimistic update; roll back if the request fails.
+    setAlerts((prev) =>
+      prev.map((a) => (a.id === alert.id ? { ...a, not_concern: true, is_read: true } : a))
+    )
+    try {
+      await markAlertNotConcern(alert.id)
+    } catch (err) {
+      setAlerts((prev) =>
+        prev.map((a) => (a.id === alert.id ? { ...a, not_concern: false } : a))
+      )
+      setError(err.message)
+    } finally {
+      setPopupAlert(null)
+    }
+  }
+
   const unreadCount = alerts.filter((a) => !a.is_read).length
 
   return (
@@ -104,6 +121,7 @@ export default function Alerts({ parentId, childId, childName, refreshKey, onBlo
               <div className="alert-card__title">
                 {!alert.is_read && <span className="alert-card__dot" />}
                 {formatCategory(alert.category)}
+                {alert.not_concern && <span className="badge badge--safe">Not a concern</span>}
               </div>
               <div className="alert-card__meta">
                 from {alert.sender} · {relativeTime(alert.created_at)}
@@ -131,6 +149,9 @@ export default function Alerts({ parentId, childId, childName, refreshKey, onBlo
           <div className="alert-popup__actions">
             <button className="btn btn--danger" onClick={() => handleBlockSender(popupAlert)}>
               Block sender
+            </button>
+            <button className="btn btn--ghost" onClick={() => handleNotConcern(popupAlert)}>
+              Not a concern
             </button>
             <button className="btn btn--ghost" onClick={() => handleDismissPopup(popupAlert)}>
               Dismiss

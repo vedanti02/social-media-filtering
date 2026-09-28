@@ -64,6 +64,12 @@ class Alert(SQLModel, table=True):
     # main.py. The alert is still recorded either way; this only tracks
     # whether a notification was actually sent for it.
     notified: bool = False
+    # True when the parent has explicitly reviewed this alert and confirmed
+    # it wasn't actually a problem (distinct from is_read, which just means
+    # "seen" -- a parent can read an alert without judging it either way).
+    # TODO: once we have enough of these, feed them back into the classifier
+    # as false-positive examples instead of just recording them.
+    not_concern: bool = False
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
