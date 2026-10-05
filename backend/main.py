@@ -3,13 +3,17 @@
 Run with:  uvicorn main:app --reload
 """
 import os
+import re
+from collections import Counter
 from datetime import timedelta, timezone
 from typing import Iterator, Optional
+from zoneinfo import ZoneInfo, available_timezones
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from auth import hash_password, new_token, verify_password
@@ -22,9 +26,11 @@ from models import (  # noqa: F401
     Child,
     Message,
     Parent,
+    ScreenTimeLimit,
+    ScreenTimeUsage,
     utcnow,
 )
-from notifications import send_alert_notification
+from notifications import send_alert_notification, send_digest_notification
 
 DATABASE_URL = "sqlite:///./app.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -34,6 +40,7 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 # notification send, so repeat messages from one sender don't spam the parent.
 ALERT_THROTTLE_MINUTES = int(os.environ.get("ALERT_THROTTLE_MINUTES", "15"))
 NOTIFY_CHANNELS = ("email", "push")
+ALERT_FREQUENCIES = ("instant", "weekly")
 
 app = FastAPI(title="Child Safety Messaging API")
 
@@ -49,7 +56,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -89,6 +96,20 @@ def get_owned_child(session: Session, parent: Parent, child_id: int) -> Child:
 def on_startup() -> None:
     # TODO: replace with Alembic migrations if schema changes become frequent
     SQLModel.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """create_all() never alters a table that already exists, so an app.db
+    created before a column was added would 500 on every query touching it.
+    Add such columns in place. Idempotent; a fresh DB already has them all.
+    """
+    with engine.begin() as conn:
+        parent_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(parent)")}
+        if "alert_frequency" not in parent_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE parent ADD COLUMN alert_frequency VARCHAR NOT NULL DEFAULT 'instant'"
+            )
 
 
 # --- Request/response schemas -------------------------------------------------
@@ -108,6 +129,7 @@ class ParentPublic(SQLModel):
     name: str
     email: str
     notify_channel: str
+    alert_frequency: str
 
 
 class SignupRequest(SQLModel):
@@ -284,7 +306,9 @@ def create_message(
             # once the classifier detects categories, not just severity.
             category="high_toxicity",
             severity_score=score,
-            notified=not throttled,
+            # Weekly-digest parents get this alert in build_weekly_digest
+            # instead of a notification now.
+            notified=parent.alert_frequency == "instant" and not throttled,
         )
         session.add(alert)
 
@@ -458,6 +482,41 @@ class NotifyChannelUpdate(SQLModel):
     channel: str
 
 
+class AlertFrequencyUpdate(SQLModel):
+    frequency: str
+
+
+DIGEST_PERIOD_DAYS = 7
+
+
+def build_weekly_digest(session: Session, parent: Parent) -> dict:
+    """Summarize the parent's alerts over the last DIGEST_PERIOD_DAYS days.
+
+    Skips alerts the parent was already notified about individually (e.g.
+    before switching to weekly) and ones they marked "not a concern". Like
+    Alert itself, the digest carries no message text -- only how many alerts
+    were raised and by whom.
+    """
+    since = utcnow() - timedelta(days=DIGEST_PERIOD_DAYS)
+    senders = session.exec(
+        select(Alert.sender)
+        .join(Child, Alert.child_id == Child.id)
+        .where(
+            Child.parent_id == parent.id,
+            Alert.created_at >= since,
+            Alert.notified == False,  # noqa: E712
+            Alert.not_concern == False,  # noqa: E712
+        )
+    ).all()
+    counts = Counter(senders)
+    return {
+        "parent_id": parent.id,
+        "period_days": DIGEST_PERIOD_DAYS,
+        "total_alerts": len(senders),
+        "senders": [{"sender": sender, "count": count} for sender, count in counts.most_common()],
+    }
+
+
 @app.get("/parents/{parent_id}", response_model=ParentPublic)
 def get_parent(parent_id: int, parent: Parent = Depends(get_current_parent)):
     if parent_id != parent.id:
@@ -483,6 +542,44 @@ def update_notify_channel(
     session.commit()
     session.refresh(parent)
     return parent
+
+
+@app.patch("/parents/{parent_id}/alert-frequency", response_model=ParentPublic)
+def update_alert_frequency(
+    parent_id: int,
+    payload: AlertFrequencyUpdate,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    if parent_id != parent.id:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    if payload.frequency not in ALERT_FREQUENCIES:
+        raise HTTPException(
+            status_code=400, detail=f"frequency must be one of {ALERT_FREQUENCIES}"
+        )
+    parent.alert_frequency = payload.frequency
+    session.add(parent)
+    session.commit()
+    session.refresh(parent)
+    return parent
+
+
+@app.post("/parents/{parent_id}/digest")
+def send_digest(
+    parent_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    """Build and send the weekly digest now. send_digests.py does the same
+    for every weekly-mode parent on a schedule; nothing is sent when there
+    were no alerts in the period."""
+    if parent_id != parent.id:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    digest = build_weekly_digest(session, parent)
+    sent = digest["total_alerts"] > 0
+    if sent:
+        send_digest_notification(parent, digest)
+    return {**digest, "sent": sent}
 
 
 # --- Blocklist ----------------------------------------------------------------
@@ -590,3 +687,175 @@ def unblock_sender(
     session.delete(blocked)
     session.commit()
     return {"id": blocked_id, "unblocked": True}
+
+
+# --- Screen time ----------------------------------------------------------------
+
+HHMM_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+MAX_DAILY_LIMIT_MINUTES = 24 * 60
+# Each heartbeat credits one minute of use. Heartbeats closer together than
+# this are dropped, so two open tabs don't count the same minute twice.
+HEARTBEAT_MIN_INTERVAL = timedelta(seconds=50)
+IANA_TIMEZONES = available_timezones()  # scans the tz database; do it once
+
+
+class ScreenTimeUpdate(SQLModel):
+    daily_limit_minutes: Optional[int] = None
+    allowed_start: Optional[str] = None
+    allowed_end: Optional[str] = None
+    timezone: str = "UTC"
+
+
+class ScreenTimeStatus(SQLModel):
+    child_id: int
+    daily_limit_minutes: Optional[int]
+    allowed_start: Optional[str]
+    allowed_end: Optional[str]
+    timezone: str
+    minutes_used: int
+    minutes_remaining: Optional[int]  # None when there's no daily limit
+    locked: bool
+    lock_reason: Optional[str]  # "daily_limit" | "outside_hours" | None
+
+
+def _screen_time_limit(session: Session, child_id: int) -> ScreenTimeLimit:
+    """The child's saved rules, or an unsaved no-rules default."""
+    limit = session.exec(
+        select(ScreenTimeLimit).where(ScreenTimeLimit.child_id == child_id)
+    ).first()
+    return limit or ScreenTimeLimit(child_id=child_id)
+
+
+def _local_day(limit: ScreenTimeLimit):
+    """(local "YYYY-MM-DD", local "HH:MM") right now in the limit's timezone."""
+    local_now = utcnow().astimezone(ZoneInfo(limit.timezone))
+    return local_now.date().isoformat(), local_now.strftime("%H:%M")
+
+
+def _usage_today(session: Session, child_id: int, day: str) -> Optional[ScreenTimeUsage]:
+    return session.exec(
+        select(ScreenTimeUsage).where(
+            ScreenTimeUsage.child_id == child_id, ScreenTimeUsage.day == day
+        )
+    ).first()
+
+
+def _within_window(now_hhmm: str, start: str, end: str) -> bool:
+    # Zero-padded "HH:MM" strings compare correctly as strings.
+    if start < end:
+        return start <= now_hhmm < end
+    return now_hhmm >= start or now_hhmm < end  # wraps past midnight
+
+
+def _screen_time_status(session: Session, child_id: int) -> ScreenTimeStatus:
+    limit = _screen_time_limit(session, child_id)
+    day, now_hhmm = _local_day(limit)
+    usage = _usage_today(session, child_id, day)
+    minutes_used = usage.minutes if usage else 0
+
+    minutes_remaining = None
+    if limit.daily_limit_minutes is not None:
+        minutes_remaining = max(0, limit.daily_limit_minutes - minutes_used)
+
+    lock_reason = None
+    if minutes_remaining == 0:
+        lock_reason = "daily_limit"
+    elif limit.allowed_start and limit.allowed_end and not _within_window(
+        now_hhmm, limit.allowed_start, limit.allowed_end
+    ):
+        lock_reason = "outside_hours"
+
+    return ScreenTimeStatus(
+        child_id=child_id,
+        daily_limit_minutes=limit.daily_limit_minutes,
+        allowed_start=limit.allowed_start,
+        allowed_end=limit.allowed_end,
+        timezone=limit.timezone,
+        minutes_used=minutes_used,
+        minutes_remaining=minutes_remaining,
+        locked=lock_reason is not None,
+        lock_reason=lock_reason,
+    )
+
+
+@app.get("/screen-time/{child_id}", response_model=ScreenTimeStatus)
+def get_screen_time(
+    child_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    get_owned_child(session, parent, child_id)
+    return _screen_time_status(session, child_id)
+
+
+@app.put("/screen-time/{child_id}", response_model=ScreenTimeStatus)
+def update_screen_time(
+    child_id: int,
+    payload: ScreenTimeUpdate,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    """Replace the child's rules. Send null for a rule to turn it off."""
+    get_owned_child(session, parent, child_id)
+
+    if payload.daily_limit_minutes is not None and not (
+        1 <= payload.daily_limit_minutes <= MAX_DAILY_LIMIT_MINUTES
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Daily limit must be between 1 and {MAX_DAILY_LIMIT_MINUTES} minutes",
+        )
+    if (payload.allowed_start is None) != (payload.allowed_end is None):
+        raise HTTPException(status_code=400, detail="Set both allowed hours, or neither")
+    if payload.allowed_start is not None:
+        if not (HHMM_PATTERN.match(payload.allowed_start) and HHMM_PATTERN.match(payload.allowed_end)):
+            raise HTTPException(status_code=400, detail="Allowed hours must be HH:MM")
+        if payload.allowed_start == payload.allowed_end:
+            raise HTTPException(status_code=400, detail="Allowed hours can't start and end at the same time")
+    # An exact match against the IANA list, not just "ZoneInfo() loads": on a
+    # case-insensitive filesystem ZoneInfo("utc") loads too, and would then
+    # break on a case-sensitive one.
+    if payload.timezone not in IANA_TIMEZONES:
+        raise HTTPException(status_code=400, detail="Unknown timezone")
+
+    limit = session.exec(
+        select(ScreenTimeLimit).where(ScreenTimeLimit.child_id == child_id)
+    ).first() or ScreenTimeLimit(child_id=child_id)
+    limit.daily_limit_minutes = payload.daily_limit_minutes
+    limit.allowed_start = payload.allowed_start
+    limit.allowed_end = payload.allowed_end
+    limit.timezone = payload.timezone
+    session.add(limit)
+    session.commit()
+    return _screen_time_status(session, child_id)
+
+
+@app.post("/screen-time/{child_id}/heartbeat", response_model=ScreenTimeStatus)
+def screen_time_heartbeat(
+    child_id: int,
+    parent: Parent = Depends(get_current_parent),
+    session: Session = Depends(get_session),
+):
+    """Called about once a minute while the child's screen is open; credits
+    one minute of use unless the child is locked out."""
+    get_owned_child(session, parent, child_id)
+    if _screen_time_status(session, child_id).locked:
+        return _screen_time_status(session, child_id)
+
+    day, _ = _local_day(_screen_time_limit(session, child_id))
+    usage = _usage_today(session, child_id, day) or ScreenTimeUsage(child_id=child_id, day=day)
+    now = utcnow()
+    last = usage.last_heartbeat_at
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)  # SQLite drops tzinfo
+    if last is None or now - last >= HEARTBEAT_MIN_INTERVAL:
+        usage.minutes += 1
+        usage.last_heartbeat_at = now
+        session.add(usage)
+        try:
+            session.commit()
+        except IntegrityError:
+            # A concurrent heartbeat created today's row first; this one is
+            # the duplicate, so drop it.
+            session.rollback()
+    return _screen_time_status(session, child_id)

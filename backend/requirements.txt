@@ -1,6 +1,8 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 sqlmodel>=0.0.16
+# IANA timezone data for zoneinfo (screen-time rules); slim Linux images lack it
+tzdata
 # TODO: uncomment when wiring up toxic-bert in classifier.py
 # transformers
 # torch

@@ -155,3 +155,31 @@ export function updateNotifyChannel(parentId, channel) {
     body: JSON.stringify({ channel }),
   })
 }
+
+// PATCH /parents/{parent_id}/alert-frequency  ("instant" | "weekly")
+export function updateAlertFrequency(parentId, frequency) {
+  return request(`/parents/${parentId}/alert-frequency`, {
+    method: 'PATCH',
+    body: JSON.stringify({ frequency }),
+  })
+}
+
+// POST /parents/{parent_id}/digest  -> { total_alerts, senders: [{ sender, count }], sent, ... }
+export function sendDigest(parentId) {
+  return request(`/parents/${parentId}/digest`, { method: 'POST' })
+}
+
+// GET /screen-time/{child_id}  -> rules + today's usage + { locked, lock_reason }
+export function getScreenTime(childId) {
+  return request(`/screen-time/${childId}`)
+}
+
+// PUT /screen-time/{child_id}  (null turns a rule off)
+export function updateScreenTime(childId, rules) {
+  return request(`/screen-time/${childId}`, { method: 'PUT', body: JSON.stringify(rules) })
+}
+
+// POST /screen-time/{child_id}/heartbeat  -> same shape as getScreenTime
+export function screenTimeHeartbeat(childId) {
+  return request(`/screen-time/${childId}/heartbeat`, { method: 'POST' })
+}

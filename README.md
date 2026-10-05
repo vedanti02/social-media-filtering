@@ -23,6 +23,15 @@ the login page to sign up (a parent account plus a profile for one child).
 > Auth added a `password_hash` column and an `authtoken` table. If you have an
 > older local `backend/app.db`, delete it and re-run `python seed.py`.
 
+### Weekly alert digest
+Parents who pick "Weekly digest" under Notifications get one summary a week
+instead of a notification per alert. Send the digests from `backend/` with
+`python send_digests.py`, e.g. from cron every Monday at 8am:
+```
+0 8 * * 1  cd /path/to/backend && .venv/bin/python send_digests.py
+```
+The dashboard's "Send digest now" button sends the same digest on demand.
+
 ## Frontend
 ```
 cd frontend

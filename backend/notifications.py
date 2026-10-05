@@ -17,3 +17,10 @@ def send_alert_notification(parent: Parent, alert: Alert) -> None:
         f"[notify:{parent.notify_channel}] parent {parent.id}: "
         f"{alert.category} alert from {alert.sender}"
     )
+
+
+def send_digest_notification(parent: Parent, digest: dict) -> None:
+    print(
+        f"[notify:{parent.notify_channel}] parent {parent.id}: weekly digest, "
+        f"{digest['total_alerts']} alert(s) from {len(digest['senders'])} sender(s)"
+    )

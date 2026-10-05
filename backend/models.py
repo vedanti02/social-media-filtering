@@ -5,6 +5,7 @@ TODO: teammates — review field types/constraints and add relationships as need
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -17,6 +18,9 @@ class Parent(SQLModel, table=True):
     name: str
     email: str = Field(index=True, unique=True)
     notify_channel: str = "email"  # "email" | "push"
+    # "instant" sends each severe alert as it happens (subject to throttling);
+    # "weekly" holds them for the digest -- see build_weekly_digest in main.py.
+    alert_frequency: str = "instant"
     password_hash: str = ""  # see auth.py; never return this from an endpoint
 
 
@@ -92,3 +96,32 @@ class BlockedSender(SQLModel, table=True):
     child_id: int = Field(foreign_key="child.id", index=True)
     sender: str = Field(index=True)
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class ScreenTimeLimit(SQLModel, table=True):
+    """A parent's screen-time rules for one child. Either rule may be unset.
+
+    allowed_start/allowed_end are "HH:MM" in `timezone` (an IANA name from the
+    parent's browser), so "today" and "allowed hours" follow the family's
+    clock rather than the server's UTC. A window with start > end wraps past
+    midnight, e.g. 20:00-07:00.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    child_id: int = Field(foreign_key="child.id", index=True, unique=True)
+    daily_limit_minutes: Optional[int] = None
+    allowed_start: Optional[str] = None
+    allowed_end: Optional[str] = None
+    timezone: str = "UTC"
+
+
+class ScreenTimeUsage(SQLModel, table=True):
+    """Minutes a child has spent in the app on one local day."""
+
+    __table_args__ = (UniqueConstraint("child_id", "day"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    child_id: int = Field(foreign_key="child.id", index=True)
+    day: str = Field(index=True)  # "YYYY-MM-DD" in the child's ScreenTimeLimit.timezone
+    minutes: int = 0
+    last_heartbeat_at: Optional[datetime] = None
